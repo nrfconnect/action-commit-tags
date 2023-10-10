@@ -1,0 +1,26 @@
+name: 'Commit tags'
+description: 'Check commit (sauce) tags in an OSS based NCS repository'
+inputs:
+  target:
+    description: 'path to the target repository'
+    required: true
+  baserev:
+    description: 'base revision to use. Will compute a rev-list --first-parent to HEAD'
+    default: 'none'
+  revrange:
+    description: 'revision range in gitlint format (comma-separated SHAs)'
+    default: 'none'
+  args:
+    description: 'additional arguments'
+
+runs:
+  using: "composite"
+  steps:
+    - id: run-python
+      run: |
+           python3 ${{ github.action_path }}/action.py \
+               --target "${{ inputs.target }}" \
+               --baserev "${{ inputs.baserev }}" \
+               --revrange "${{ inputs.revrange }}"
+
+      shell: bash
