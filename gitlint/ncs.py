@@ -46,7 +46,11 @@ class NCSSauceTags(CommitRule):
                     commit.message.title):
                 return [RuleViolation(self.id, 'Invalid mergeup commit title')]
         elif tag == 'fromlist':
-            regex = r'^Upstream PR: https://github\.com/.*/pull/\d+'
+            regex = r'^Upstream PR: (' \
+                     'https://github\.com/.*/pull/\d+|' \
+                     'http://lists.infradead.org/pipermail/hostap/.*\.html' \
+                     ')'
+
             matches = re.findall(regex, '\n'.join(commit.message.body), re.MULTILINE)
             if len(matches) == 0:
                 return [RuleViolation(self.id,
