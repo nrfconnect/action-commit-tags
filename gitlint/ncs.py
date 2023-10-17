@@ -38,6 +38,14 @@ class NCSSauceTags(CommitRule):
                                   line_nr=1)]
         self.log.debug(f'Matched sauce tag {tag}')
 
+        # Skip the rest of checks if the commit is a revert
+        if commit.is_revert_commit:
+            if tag == 'mergeup':
+                return [RuleViolation(self.id, 'Mergeup cannot be reverted',
+                                  line_nr=1)]
+            self.log.debug(f'Revert commit, skipping additional checks')
+            return
+
         if tag == 'mergeup':
             if not commit.is_merge_commit:
                 return [RuleViolation(self.id,
