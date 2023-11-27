@@ -56,7 +56,7 @@ class NCSSauceTags(CommitRule):
         elif tag == 'fromlist':
             regex = r'^Upstream PR: (' \
                      'https://github\.com/.*/pull/\d+|' \
-                     'http://lists.infradead.org/pipermail/hostap/.*\.html' \
+                     'https://lists.infradead.org/pipermail/hostap/.*\.html' \
                      ')'
 
             matches = re.findall(regex, '\n'.join(commit.message.body), re.MULTILINE)
