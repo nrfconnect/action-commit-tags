@@ -10,6 +10,9 @@ inputs:
   revrange:
     description: 'revision range in gitlint format (comma-separated SHAs)'
     default: 'none'
+  upstream:
+    description: 'Upstream org/repo'
+    default: 'none'
   args:
     description: 'additional arguments'
 
@@ -20,6 +23,8 @@ runs:
       run: |
            python3 ${{ github.action_path }}/action.py \
                --target "${{ inputs.target }}" \
+               --upstream "${{ inputs.upstream }}" \
+               --pr "${{ github.repository }}/${{ github.event.pull_request.number }}" \
                --baserev "${{ inputs.baserev }}" \
                --revrange "${{ inputs.revrange }}"
 

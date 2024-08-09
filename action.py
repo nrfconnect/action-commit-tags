@@ -37,6 +37,8 @@ PARSER.add_argument('-b', '--baserev', default=None, required=True,
                     help='Base revision to use, all the way to HEAD')
 PARSER.add_argument('-r', '--revrange', default=None, required=True,
                     help='Revision range to use in gitlint format')
+PARSER.add_argument('--pr', default=None, required=True,
+                    help='<org>/<repo>/<pr num>')
 PARSER.add_argument('--quiet-subprocesses', action='store_true',
                     help='silence output related to running subprocesses')
 
@@ -56,7 +58,7 @@ def parse_args():
 
     ARGS = PARSER.parse_args()
     
-    stdout(f'target: {ARGS.target} baserev: {ARGS.baserev} revrange: {ARGS.revrange}')
+    stdout(f'target: {ARGS.target} baserev: {ARGS.baserev} revrange: {ARGS.revrange} pr: {ARGS.pr}')
 
     if ARGS.baserev == 'none' and ARGS.revrange == 'none':
         sys.exit('Must specify either baserev or revrange')

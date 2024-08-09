@@ -15,7 +15,9 @@ class NCSSauceTags(CommitRule):
     # A rule MUST have a *unique* id, we recommend starting with UC (for User-defined Commit-rule).
     id = "UC100"
 
-    options_spec = [BoolOption('enable', False, 'Enable the Sauce Tags Rule')]
+    options_spec = [BoolOption('enable', False, 'Enable the Sauce Tags Rule'),
+                    StrOption('pr', None, 'Pull Reqest: <org>/<repo>/<pr>'),
+                    StrOption('upstream', None, 'Upstream <org>/<repo>')]
 
     def validate(self, commit):
         self.log.debug(f'NCSSauceTags: enable:{self.options["enable"].value} ' \
