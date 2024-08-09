@@ -15,6 +15,8 @@ import subprocess
 import sys
 import tempfile
 
+from github import Github, GithubException
+
 # 3rd party imports go here, if any are added.
 
 # Portability:
@@ -51,6 +53,13 @@ def stdout(*msg):
 
     print(f'{PROG}:', *msg)
     sys.stdout.flush()
+
+def gh_pr_split(s):
+    sl = s.split('/')
+    if len(sl) != 3:
+        raise RuntimeError(f"Invalid pr format: {s}")
+
+    return sl[0], sl[1], sl[2]
 
 def parse_args():
     # Parse arguments into the ARGS global, validating them before
@@ -109,6 +118,10 @@ def main():
 
     token = os.environ.get('GITHUB_TOKEN', None)
     stdout(f'token: \"{token}\"')
+
+    gh = Github(token or None)
+
+    org_str, repo_str, pr_num = gh_pr_split(ARGS.pr)
 
     target = Path(ARGS.target).absolute()
 
