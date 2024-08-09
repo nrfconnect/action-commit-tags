@@ -1,7 +1,7 @@
 # Copyright (c) 2022 Nordic Semiconductor ASA
 # SPDX-License-Identifier: Apache-2.0
 
-from gitlint.rules import BoolOption, CommitRule, RuleViolation
+from gitlint.rules import BoolOption, StrOption, CommitRule, RuleViolation
 import re
 
 class NCSSauceTags(CommitRule):
