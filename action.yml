@@ -13,6 +13,8 @@ inputs:
   upstream:
     description: 'Upstream org/repo'
     default: 'none'
+  github-token:
+    description: 'The token to authenticate with'
   args:
     description: 'additional arguments'
 
@@ -29,3 +31,5 @@ runs:
                --revrange "${{ inputs.revrange }}"
 
       shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}

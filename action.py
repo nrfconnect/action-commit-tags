@@ -107,6 +107,9 @@ def runc_out(cmd, **kwargs):
 def main():
     parse_args()
 
+    token = os.environ.get('GITHUB_TOKEN', None)
+    stdout(f'token: \"{token}\"')
+
     target = Path(ARGS.target).absolute()
 
     if not target.is_dir():
