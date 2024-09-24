@@ -3,15 +3,9 @@ description: 'Check commit (sauce) tags in an OSS based NCS repository'
 inputs:
   target:
     description: 'path to the target repository'
-    required: true
-  baserev:
-    description: 'base revision to use. Will compute a rev-list --first-parent to HEAD'
-    default: 'none'
-  revrange:
-    description: 'revision range in gitlint format (comma-separated SHAs)'
     default: 'none'
   upstream:
-    description: 'Upstream org/repo'
+    description: 'Upstream <org>/<repo>/<branch>'
     default: 'none'
   github-token:
     description: 'The token to authenticate with'
@@ -32,8 +26,6 @@ runs:
                --target "${{ inputs.target }}" \
                --upstream "${{ inputs.upstream }}" \
                --pr "${{ github.repository }}/${{ github.event.pull_request.number }}" \
-               --baserev "${{ inputs.baserev }}" \
-               --revrange "${{ inputs.revrange }}"
 
       shell: bash
       env:
