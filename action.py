@@ -7,6 +7,7 @@
 from typing import Dict, List
 from pathlib import Path
 import argparse
+import functools
 import json
 import os
 import re
@@ -47,11 +48,19 @@ PARSER.add_argument('--quiet-subprocesses', action='store_true',
 
 ARGS = None                     # global arguments, see parse_args()
 
-def stdout(*msg):
-    # Print a diagnostic message to standard error.
-
-    print(f'{PROG}:', *msg)
+def stdout(msg):
+    print(f'{PROG}: {msg}', file=sys.stdout)
     sys.stdout.flush()
+
+die_switch = None
+
+def die(s):
+    print(f'ERROR: {s}', file=sys.stderr)
+    if die_switch:
+        # Switch back
+        stdout('die: switch')
+        try_switch_back(die_switch)
+    sys.exit(1)
 
 def gh_pr_split(s):
     sl = s.split('/')
@@ -72,16 +81,16 @@ def parse_args():
     stdout(f'pr: {ARGS.pr} upstream: {ARGS.upstream}')
 
     if ARGS.target == 'none':
-        sys.exit('--target is required')
+        die('--target is required')
 
     if ARGS.upstream == 'none':
-        sys.exit('--upstream is required')
+        die('--upstream is required')
 
     if ARGS.baserev == 'none' and ARGS.pr == 'none':
-            sys.exit('--baserev or --pr is required')
+            die('--baserev or --pr is required')
 
     if ARGS.baserev != 'none' and ARGS.pr != 'none':
-            sys.exit('--baserev and --pr are mutually exclusive')
+            die('--baserev and --pr are mutually exclusive')
 
 def ssplit(cmd):
     if isinstance(cmd, str):
@@ -105,20 +114,20 @@ def runc(cmd, exit_on_cpe=True, **kwargs):
         ret = subprocess.run(ssplit(cmd), **kwargs)
     except subprocess.CalledProcessError as e:
         if exit_on_cpe:
-            sys.exit(f'Execution of {cmd} failed with {e.returncode}')
+            die(f'Execution of {cmd} failed with {e.returncode}')
         else:
             raise
 
     return ret
 
-def runc_out(cmd, exit_on_cpe=True, **kwargs):
+def runc_out(cmd, exit_on_cpe=True, suppress_stderr=False, **kwargs):
     # A shorthand for running a simple shell command and getting its output.
 
     cwd = kwargs.get('cwd', os.getcwd())
 
-    if ARGS.quiet_subprocesses:
+    if ARGS.quiet_subprocesses or suppress_stderr:
         kwargs['stderr'] = subprocess.DEVNULL
-    else:
+    if not ARGS.quiet_subprocesses:
         stdout(f'running "{cmd}" in "{cwd}"')
 
     kwargs['check'] = True
@@ -129,82 +138,183 @@ def runc_out(cmd, exit_on_cpe=True, **kwargs):
         cp = subprocess.run(ssplit(cmd), **kwargs)
     except subprocess.CalledProcessError as e:
         if exit_on_cpe:
-            sys.exit(f'Execution of {cmd} failed with {e.returncode}')
+            die(f'Execution of {cmd} failed with {e.returncode}')
         else:
             raise
 
     return cp.stdout.rstrip()
 
-def fetch_upstream(gh, upstream):
-    pass
+@functools.cache
+def fetch_branch(repo, branch, target):
+    ref = f'nrf/ref/{branch}'
+    runc(f'git -C {target} fetch {repo.clone_url} {branch}:{ref}')
+    return ref
 
-def fetch_pr(gh, pr):
-    pass
+@functools.cache
+def fetch_pr(repo, prn, target):
+    pr = repo.get_pull(prn)
+    if pr.is_merged():
+        die(f'PR #{prn} is merged, please use [nrf fromtree] instead')
+    if pr.state == 'closed':
+        die(f'PR #{prn} is closed and not merged')
+
+    shas = [c.sha for c in pr.get_commits()]
+    ref = f'nrf/pull/{prn}'
+    runc(f'git -C {target} fetch {repo.clone_url} pull/{prn}/head:{ref}')
+
+    stdout(f'PR #{prn} ref: {ref}')
+    stdout(f'PR #{prn} shas: {shas}')
+    return ref, shas
 
 def merge_base(target, base, head):
     mb = runc_out(f'git -C {target} merge-base {base} {head}')
     stdout(f'merge base {mb}')
     return mb
 
-def check_commit(urepo, target, sha):
-    stdout(f'Checking commit {sha}')
+@functools.cache
+def get_commit_msg(target, sha):
     cm = runc_out(f'git -C {target} show -s --format=%B {sha}').split('\n')
-    title = cm[0]
+    title = cm[0].lstrip().rstrip()
     body = '\n'.join(cm[1:])
-#    stdout(f'{title}')
-#    stdout(f'{body}')
+
+    return title, body
+
+def range_diff(target, s1, s2, stat=False):
+    # Compare commit ranges (sha^! is a range for sha itself)
+    stats = ' --stat' if stat else ''
+    out = runc_out(f'git -C {target} range-diff --no-color{stats} {s1}^! {s2}^!')
+    return out
+
+def get_commit_diff(target, sha):
+    # Get the diff of a commit (sha^! is a range for sha itself)
+    diff = runc_out(f'git -C {target} diff {sha}^!').split('\n')
+
+    return diff
+
+def try_switch_back(target):
+    try:
+        _ = runc_out(f'git -C {target} switch -', exit_on_cpe=False,
+                     suppress_stderr=True)
+    except subprocess.CalledProcessError as e:
+        pass
+
+def check_commit(urepo, ubranch, target, sha, merge):
+    stdout(f'--- Checking commit {sha}')
+    title, body = get_commit_msg(target, sha)
     m = re.match(r'^(Revert\s+\")?\[nrf (mergeup|fromtree|fromlist|noup)\]\s+',
                  title)
     if not m:
-        sys_exit(f'{sha}: Title does not contain a sauce tag')
+        die(f'{sha}: Title does not contain a sauce tag')
     revert = m.group(1)
     tag = m.group(2)
     if not tag:
-        sys_exit(f'{sha}: Title does not contain a sauce tag')
+        die(f'{sha}: Title does not contain a sauce tag')
     
-    #stdout(tag)
-
-    # Skip the rest of checks if the commit is a revert
     if revert:
         if tag == 'mergeup':
-            sys.exit('Mergeup cannot be reverted')
-        stdout(f'Revert commit, skipping additional checks')
-        return
-
-    if tag == 'mergeup':
+            die('Mergeup cannot be reverted')
+        regex = r'^This reverts commit \b([a-f0-9]{40})\b\.'
+        match = re.search(regex, body, re.MULTILINE)
+        if not match:
+            die(f'{sha}: revert commit missing reverted SHA')
+        stdout(f'revert: {match.group(1)}')
+        # The SHA to replay is the revert commmit's
+        usha = sha
+    elif tag == 'mergeup':
         # Count the merges in this commit range (sha^! is a range for sha
         # itself)
-        count = runc_out('git rev-list --merges --count {sha}^!')
+        count = runc_out(f'git -C {target} rev-list --merges --count {sha}^!')
         if count != '1':
-            sys.exit('mergeup used in a non-merge commit')
+            die('mergeup used in a non-merge commit')
         if not re.match(r'^\[nrf mergeup\] Merge upstream up to commit \b([a-f0-9]{40})\b',
                          title):
-            sys.exit('{sha}: Invalid mergeup commit title')
+            die(f'{sha}: Invalid mergeup commit title')
+
+        # We cannot replay the mergeup commit
+        return True
     elif tag == 'fromlist':
-        regex = r'^Upstream PR: (' \
-                r'https://github\.com/.*/pull/(\d+)|' \
-                r'http://lists.infradead.org/pipermail/hostap/.*\.html' \
-                r')'
+        regex = r'^Upstream PR: https://github\.com/.*/pull/(\d+)'
 
         match = re.search(regex, body, re.MULTILINE)
         if not match:
-            sys_exit(f'{sha}: fromlist commit missing an Upstream PR reference')
+            die(f'{sha}: fromlist commit missing an Upstream PR reference')
         
-        #stdout(f'fromlist: {match.group(1)}')
-        if urepo:
-            upr = match.group(2)
-            stdout(f'fromlist: {upr}')
+        upr = match.group(1)
+        stdout(f'fromlist: {upr}')
+
+        # Check and Fetch the upstream Pull Request
+        ref, shas = fetch_pr(urepo, int(upr), target)
+
+        # Match a commit
+        usha = None
+        for s in shas:
+            t, b = get_commit_msg(target, s)
+            # Match the upstream commit title with the downstream one
+            if t in title:
+                stdout(f'fromlist: Matched upstream PR commit {s}')
+                usha = s
+                break
+
+        if not usha:
+                die(f'{sha}: unable to match any commit from PR {upr}')
+
     elif tag == 'fromtree':
         regex = r'^\(cherry picked from commit \b([a-f0-9]{40})\b\)'
         match = re.search(regex, body, re.MULTILINE)
         if not match:
-            sys_exit(f'{sha}: fromtree commit missing cherry-pick reference')
+            die(f'{sha}: fromtree commit missing cherry-pick reference')
         #stdout(f'fromtree: {match.group(0)}')
-        if urepo:
-            usha = match.group(1)
-            stdout(f'fromtree: {usha}')
+
+        usha = match.group(1)
+        stdout(f'fromtree: {usha}')
+
+        # Fetch the upstream main branch
+        ref = fetch_branch(urepo, ubranch, target)
+
+        # Verify that the commit exists at all in the working tree
+        _ = runc_out(f'git -C {target} rev-parse --verify {usha}^{{commit}}')
+
+        # Verify that the commit is in the required branch
+        contains = runc_out(f'git -C {target} branch {ref} --contains {usha}')
+
+        if not re.match(rf'^.*{ref}.*$', contains):
+            die(f'Branch {ref} does not contain commit {usha}')
+
+    elif tag == 'noup':
+        stdout('noup')
+        # The SHA to replay is the noup commmit's
+        usha = sha
+
+    # Skip cherry-picking if a merge has been found
+    if merge:
+        stdout(f'merge: skipping cherry-pick of {sha}')
+        return True
+
+    # Cherry-pick the commit into the replay branch
+    try:
+        out = runc_out(f'git -C {target} cherry-pick {usha}', exit_on_cpe=False)
+    except subprocess.CalledProcessError as e:
+        # Make sure we abort the cherry-pick
+        try:
+            _ = runc_out(f'git -C {target} cherry-pick --abort',
+                           exit_on_cpe=False)
+        except subprocess.CalledProcessError as e:
+            pass
+        # Ignore it and exit forcefully
+        die(f'ERROR: unable to cherry-pick {usha}')
+
+    # Execute a diff between the replay branch and the sha to make sure the
+    # commit has not been modified
+    diff = runc_out(f'git -C {target} diff {sha}')
+
+    if diff:
+        die('SHA {sha} non-empty diff:\n{diff}')
+
+    return False
 
 def main():
+    global die_switch
+
     parse_args()
 
     token = os.environ.get('GITHUB_TOKEN', None)
@@ -217,7 +327,7 @@ def main():
 
     target = Path(ARGS.target).absolute()
     if not target.is_dir():
-        sys.exit(f'target repo {target} does not exist; check path')
+        die(f'target repo {target} does not exist; check path')
 
     org_str, repo_str, br_str = gh_pr_split(ARGS.upstream)
     urepo = gh.get_repo(f'{org_str}/{repo_str}')
@@ -225,30 +335,47 @@ def main():
     if ARGS.pr != 'none':
         org_str, repo_str, pr_str = gh_pr_split(ARGS.pr)
         drepo = gh.get_repo(f'{org_str}/{repo_str}')
-        dpr = drepo.get_pull(int(pr_str))
+        prn = int(pr_str)
+        dpr = drepo.get_pull(prn)
         baserev = merge_base(target, dpr.base.sha, dpr.head.sha)
         headrev = dpr.head.sha
         dcommits = [c for c in dpr.get_commits()]
         dshas = [c.sha for c in dcommits]
-        stdout(f'SHAs found in PR: {dshas}')
+        stdout(f'{len(dshas)} commits found in PR')
     else:
         baserev = ARGS.baserev
         headrev = 'HEAD'
+        prn = 0
 
     stdout(f'baserev: {baserev}')
     stdout(f'headrev: {headrev}')
     revs = runc_out(f'git -C {target} rev-list --first-parent {baserev}..{headrev}')
     revs = revs.split('\n')
     revs.reverse()
-    stdout(f'revs: {revs}')
+    stdout(f'{len(revs)} commits found with rev-list')
 
-    rev_str = f"{','.join(revs)},"
+    # Prepare a replay branch
+    replay = f'nrf/replay/{prn}'
+    # Create the replay branch
+    runc(f'git -C {target} branch -f {replay} {baserev}')
+    # Switch to it
+    runc(f'git -C {target} switch {replay}')
+    die_switch = target
 
+    merge = False
+    count = 0
     for r in revs:
-        check_commit(urepo, target, r)
+        merge = check_commit(urepo, br_str, target, r, merge)
+        count += 1
+        stdout(f'- Processed commit {count}')
 
-    if dshas and dshas != revs:
-        sys.exit(f'{dshas} is different from {revs}')
+    # Switch back to the previous branch
+    stdout('main: switch')
+    die_switch = None
+    try_switch_back(target)
+
+    if not merge and (dshas and dshas != revs):
+        die(f'{dshas} is different from {revs}')
 
 if __name__ == '__main__':
     main()
