@@ -4,6 +4,9 @@ inputs:
   target:
     description: 'path to the target repository'
     default: 'none'
+  baserev:
+    description: 'base revision to use. Will compute a rev-list --first-parent to HEAD'
+    default: 'none'
   upstream:
     description: 'Upstream <org>/<repo>/<branch>'
     default: 'none'
@@ -22,8 +25,11 @@ runs:
       shell: bash
     - id: run-python
       run: |
+           git config --global user.email "you@example.com"
+           git config --global user.name "Your Name"
            python3 ${{ github.action_path }}/action.py \
                --target "${{ inputs.target }}" \
+               --baserev "${{ inputs.baserev }}" \
                --upstream "${{ inputs.upstream }}" \
                --pr "${{ github.repository }}/${{ github.event.pull_request.number }}" \
 
