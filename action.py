@@ -233,7 +233,7 @@ def check_commit(urepo, ubranch, target, sha, merge):
         # We cannot replay the mergeup commit
         return True
     elif tag == 'fromlist':
-        regex = r'^Upstream PR: https://github\.com/.*/pull/(\d+)'
+        regex = r'^Upstream PR #:\s+(\d+)\s*$'
 
         match = re.search(regex, body, re.MULTILINE)
         if not match:
