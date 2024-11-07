@@ -308,7 +308,7 @@ def check_commit(urepo, ubranch, target, sha, merge):
     diff = runc_out(f'git -C {target} diff {sha}')
 
     if diff:
-        die('SHA {sha} non-empty diff:\n{diff}')
+        die(f'SHA {sha} non-empty diff:\n{diff}')
 
     return False
 
