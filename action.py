@@ -158,6 +158,10 @@ def fetch_pr(repo, prn, target):
     if pr.state == 'closed':
         die(f'PR #{prn} is closed and not merged')
 
+    for rev in pr.get_reviews():
+        if "CHANGES_REQUESTED" in rev.state:
+            die(f'PR #{prn} has requested changes')
+
     shas = [c.sha for c in pr.get_commits()]
     ref = f'nrf/pull/{prn}'
     runc(f'git -C {target} fetch {repo.clone_url} pull/{prn}/head:{ref}')
