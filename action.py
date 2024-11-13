@@ -158,8 +158,11 @@ def fetch_pr(repo, prn, target):
     if pr.state == 'closed':
         die(f'PR #{prn} is closed and not merged')
 
+    revs = dict()
     for rev in pr.get_reviews():
-        if "CHANGES_REQUESTED" in rev.state:
+        revs[rev.user.login] = rev.state
+    for k,v in revs.items():
+        if "CHANGES_REQUESTED" in v:
             die(f'PR #{prn} has requested changes')
 
     shas = [c.sha for c in pr.get_commits()]
