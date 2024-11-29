@@ -56,6 +56,14 @@ die_switch = None
 
 def die(s):
     print(f'ERROR: {s}', file=sys.stderr)
+    print(f'\nMore information about the process can ben found in: '
+          f'\nOverall guide to PRs:'
+          f'\nhttps://nordicsemi.atlassian.net/wiki/spaces/NCS/pages/108201225/Pull+Requests'
+          f'\nCherry-picking commits:'
+          f'\nhttps://nordicsemi.atlassian.net/wiki/spaces/NCS/pages/108201225/Pull+Requests#Pull-Requests-to-OSS-repository-forks'
+          f'\nCommit (or sauce) tags:'
+          f'\nhttps://nordicsemi.atlassian.net/wiki/spaces/NCS/pages/108201225/Pull+Requests#Commit-(or-sauce)-tags'
+          f'\n')
     if die_switch:
         # Switch back
         stdout('die: switch')
@@ -156,14 +164,14 @@ def fetch_pr(repo, prn, target):
     if pr.is_merged():
         die(f'PR #{prn} is merged, please use [nrf fromtree] instead')
     if pr.state == 'closed':
-        die(f'PR #{prn} is closed and not merged')
+        die(f'PR #{prn} is closed and not merged, please open a new PR')
 
     revs = dict()
     for rev in pr.get_reviews():
         revs[rev.user.login] = rev.state
     for k,v in revs.items():
         if "CHANGES_REQUESTED" in v:
-            die(f'PR #{prn} has requested changes')
+            die(f'PR #{prn} has requested changes, please resolve those')
 
     shas = [c.sha for c in pr.get_commits()]
     ref = f'nrf/pull/{prn}'
@@ -211,19 +219,21 @@ def check_commit(urepo, ubranch, target, sha, merge):
     m = re.match(r'^(Revert\s+\")?\[nrf (mergeup|fromtree|fromlist|noup)\]\s+',
                  title)
     if not m:
-        die(f'{sha}: Title does not contain a sauce tag')
+        die(f'{sha}: Title does not contain a sauce tag '
+            f'([nrf mergeup], [nrf fromtree], [nrf fromlist], [nrf noup])')
     revert = m.group(1)
     tag = m.group(2)
     if not tag:
-        die(f'{sha}: Title does not contain a sauce tag')
+        die(f'{sha}: Title does not contain a sauce tag '
+            f'([nrf mergeup], [nrf fromtree], [nrf fromlist], [nrf noup])')
     
     if revert:
         if tag == 'mergeup':
-            die('Mergeup cannot be reverted')
+            die('Mergeup commits cannot be reverted')
         regex = r'^This reverts commit \b([a-f0-9]{40})\b\.'
         match = re.search(regex, body, re.MULTILINE)
         if not match:
-            die(f'{sha}: revert commit missing reverted SHA')
+            die(f'{sha}: revert commit message missing reverted SHA')
         stdout(f'revert: {match.group(1)}')
         # The SHA to replay is the revert commmit's
         usha = sha
@@ -244,7 +254,7 @@ def check_commit(urepo, ubranch, target, sha, merge):
 
         match = re.search(regex, body, re.MULTILINE)
         if not match:
-            die(f'{sha}: fromlist commit missing an Upstream PR reference')
+            die(f'{sha}: fromlist commit missing an "Upstream PR #:" reference')
         
         upr = match.group(1)
         stdout(f'fromlist: {upr}')
@@ -263,13 +273,14 @@ def check_commit(urepo, ubranch, target, sha, merge):
                 break
 
         if not usha:
-                die(f'{sha}: unable to match any commit from PR {upr}')
+                die(f'{sha}: unable to match any commit from upstream PR #{upr}')
 
     elif tag == 'fromtree':
         regex = r'^\(cherry picked from commit \b([a-f0-9]{40})\b\)'
         match = re.search(regex, body, re.MULTILINE)
         if not match:
-            die(f'{sha}: fromtree commit missing cherry-pick reference')
+            die(f'{sha}: fromtree commit missing cherry-pick reference. '
+                f'Please use "git cherry-pick -x" when cherry-picking')
         #stdout(f'fromtree: {match.group(0)}')
 
         usha = match.group(1)
@@ -285,7 +296,8 @@ def check_commit(urepo, ubranch, target, sha, merge):
         contains = runc_out(f'git -C {target} branch {ref} --contains {usha}')
 
         if not re.match(rf'^.*{ref}.*$', contains):
-            die(f'Branch {ref} does not contain commit {usha}')
+            die(f'fromtree: upstream branch {ref} does not contain commit {usha}. '
+                f'Please check that the commit is merged upstream')
 
     elif tag == 'noup':
         stdout('noup')
@@ -308,14 +320,22 @@ def check_commit(urepo, ubranch, target, sha, merge):
         except subprocess.CalledProcessError as e:
             pass
         # Ignore it and exit forcefully
-        die(f'ERROR: unable to cherry-pick {usha}')
+        die(f'Unable to cherry-pick commit {usha}. This means that the upstream '
+            f'commit does not apply cleanly into the NCS fork. This can happen '
+            f'if you modified an upstream commit in order to resolve conflicts, '
+            f'but this is not allowed. Instead, revert any [nrf noup] commits that '
+            f'may be causing the conflict and cherry-pick any additional prior '
+            f'commits from upstream that may be needed in order to avoid a merge '
+            f'conflict. Then you can re-apply the reverted [nrf noup] commits.')
 
     # Execute a diff between the replay branch and the sha to make sure the
     # commit has not been modified
     diff = runc_out(f'git -C {target} diff {sha}')
 
     if diff:
-        die(f'SHA {sha} non-empty diff:\n{diff}')
+        die(f'SHA {sha} non-empty diff between fork and upstream. This likely '
+            f'means that you modified an upstream commit when cherry-picking. '
+            f'This is not allowed. Full diff:\n{diff}')
 
     return False
 
