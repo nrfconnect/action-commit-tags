@@ -55,7 +55,7 @@ def stdout(msg):
 die_switch = None
 
 def die(s):
-    print(f'ERROR: {s}', file=sys.stderr)
+    print(f'\n\033[91mERROR: {s}\033[0m', file=sys.stderr)
     print(f'\nMore information about the process can ben found in: '
           f'\nOverall guide to PRs:'
           f'\nhttps://nordicsemi.atlassian.net/wiki/spaces/NCS/pages/108201225/Pull+Requests'
