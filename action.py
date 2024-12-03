@@ -311,11 +311,11 @@ def check_commit(urepo, ubranch, target, sha, merge):
 
     # Cherry-pick the commit into the replay branch
     try:
-        out = runc_out(f'git -C {target} cherry-pick {usha}', exit_on_cpe=False)
+        out = runc_out(f'git --no-advice -C {target} cherry-pick {usha}', exit_on_cpe=False)
     except subprocess.CalledProcessError as e:
         # Make sure we abort the cherry-pick
         try:
-            _ = runc_out(f'git -C {target} cherry-pick --abort',
+            _ = runc_out(f'git --no-advice -C {target} cherry-pick --abort',
                            exit_on_cpe=False)
         except subprocess.CalledProcessError as e:
             pass
