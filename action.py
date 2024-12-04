@@ -165,6 +165,8 @@ def fetch_pr(repo, prn, target):
         die(f'PR #{prn} is merged, please use [nrf fromtree] instead')
     if pr.state == 'closed':
         die(f'PR #{prn} is closed and not merged, please open a new PR')
+    if pr.draft:
+        die(f'PR #{prn} is a draft PR, please mark it as ready')
 
     revs = dict()
     for rev in pr.get_reviews():
