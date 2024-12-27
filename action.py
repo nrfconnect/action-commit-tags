@@ -237,8 +237,8 @@ def check_commit(urepo, ubranch, target, sha, merge):
         if not match:
             die(f'{sha}: revert commit message missing reverted SHA')
         stdout(f'revert: {match.group(1)}')
-        # The SHA to replay is the revert commmit's
-        usha = sha
+        # The original commit will be reverted by the action
+        usha = match.group(1)
     elif tag == 'mergeup':
         # Count the merges in this commit range (sha^! is a range for sha
         # itself)
@@ -311,24 +311,31 @@ def check_commit(urepo, ubranch, target, sha, merge):
         stdout(f'merge: skipping cherry-pick of {sha}')
         return True
 
-    # Cherry-pick the commit into the replay branch
+    if revert:
+        cmd = 'revert --no-edit'
+    else:
+        cmd = 'cherry-pick'
+    # Cherry-pick or revert the commit into the replay branch
     try:
-        out = runc_out(f'git --no-advice -C {target} cherry-pick {usha}', exit_on_cpe=False)
+        out = runc_out(f'git --no-advice -C {target} {cmd} {usha}', exit_on_cpe=False)
     except subprocess.CalledProcessError as e:
         # Make sure we abort the cherry-pick
         try:
-            _ = runc_out(f'git --no-advice -C {target} cherry-pick --abort',
+            _ = runc_out(f'git --no-advice -C {target} {cmd} --abort',
                            exit_on_cpe=False)
         except subprocess.CalledProcessError as e:
             pass
         # Ignore it and exit forcefully
-        die(f'Unable to cherry-pick commit {usha}. This means that the upstream '
-            f'commit does not apply cleanly into the NCS fork. This can happen '
-            f'if you modified an upstream commit in order to resolve conflicts, '
-            f'but this is not allowed. Instead, revert any [nrf noup] commits that '
-            f'may be causing the conflict and cherry-pick any additional prior '
-            f'commits from upstream that may be needed in order to avoid a merge '
-            f'conflict. Then you can re-apply the reverted [nrf noup] commits.')
+        if revert:
+            die(f'Unable to revert commit {usha}.')
+        else:
+            die(f'Unable to cherry-pick commit {usha}. This means that the upstream '
+                f'commit does not apply cleanly into the NCS fork. This can happen '
+                f'if you modified an upstream commit in order to resolve conflicts, '
+                f'but this is not allowed. Instead, revert any [nrf noup] commits that '
+                f'may be causing the conflict and cherry-pick any additional prior '
+                f'commits from upstream that may be needed in order to avoid a merge '
+                f'conflict. Then you can re-apply the reverted [nrf noup] commits.')
 
     # Execute a diff between the replay branch and the sha to make sure the
     # commit has not been modified
@@ -336,7 +343,8 @@ def check_commit(urepo, ubranch, target, sha, merge):
 
     if diff:
         die(f'SHA {sha} non-empty diff between fork and upstream. This likely '
-            f'means that you modified an upstream commit when cherry-picking. '
+            f'means that you modified an upstream commit when cherry-picking, '
+            f'or an existing commit when reverting it.'
             f'This is not allowed. Full diff:\n{diff}')
 
     return False
