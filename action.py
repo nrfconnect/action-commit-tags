@@ -53,9 +53,22 @@ def stdout(msg):
     sys.stdout.flush()
 
 die_switch = None
+err_list = []
+
+def print_err(s):
+    print(f'\n\033[91mERROR: {s}\033[0m', file=sys.stdout)
+
+def err(s):
+    global err_list
+    print_err(s)
+    err_list.append(s)
+
+def print_errs():
+    for e in err_list:
+        print_err(e)
 
 def die(s):
-    print(f'\n\033[91mERROR: {s}\033[0m', file=sys.stdout)
+    print_err(s)
     print(f'\nMore information about the process can ben found in: '
           f'\nOverall guide to PRs:'
           f'\nhttps://nordicsemi.atlassian.net/wiki/spaces/NCS/pages/108201225/Pull+Requests'
@@ -68,6 +81,9 @@ def die(s):
         # Switch back
         stdout('die: switch')
         try_switch_back(die_switch)
+    if len(err_list):
+        print('Additional errors:')
+        print_errs()
     sys.exit(1)
 
 def gh_pr_split(s):
@@ -162,18 +178,18 @@ def fetch_branch(repo, branch, target):
 def fetch_pr(repo, prn, target):
     pr = repo.get_pull(prn)
     if pr.is_merged():
-        die(f'PR #{prn} is merged, please use [nrf fromtree] instead')
-    if pr.state == 'closed':
-        die(f'PR #{prn} is closed and not merged, please open a new PR')
-    if pr.draft:
-        die(f'PR #{prn} is a draft PR, please mark it as ready')
+        err(f'PR #{prn} is merged, please use [nrf fromtree] instead')
+    elif pr.state == 'closed':
+        err(f'PR #{prn} is closed and not merged, please open a new PR')
+    elif pr.draft:
+        err(f'PR #{prn} is a draft PR, please mark it as ready')
 
     revs = dict()
     for rev in pr.get_reviews():
         revs[rev.user.login] = rev.state
     for k,v in revs.items():
         if "CHANGES_REQUESTED" in v:
-            die(f'PR #{prn} has requested changes, please resolve those')
+            err(f'PR #{prn} has requested changes, please resolve those')
 
     shas = [c.sha for c in pr.get_commits()]
     ref = f'nrf/pull/{prn}'
@@ -231,7 +247,7 @@ def check_commit(urepo, ubranch, target, sha, merge):
     
     if revert:
         if tag == 'mergeup':
-            die('Mergeup commits cannot be reverted')
+            die(f'{sha}: Mergeup commits cannot be reverted')
         regex = r'^This reverts commit \b([a-f0-9]{40})\b\.'
         match = re.search(regex, body, re.MULTILINE)
         if not match:
@@ -244,7 +260,7 @@ def check_commit(urepo, ubranch, target, sha, merge):
         # itself)
         count = runc_out(f'git -C {target} rev-list --merges --count {sha}^!')
         if count != '1':
-            die('mergeup used in a non-merge commit')
+            die(f'{sha}: mergeup used in a non-merge commit')
         if not re.match(r'^\[nrf mergeup\] Merge upstream up to commit \b([a-f0-9]{40})\b',
                          title):
             die(f'{sha}: Invalid mergeup commit title')
@@ -256,7 +272,8 @@ def check_commit(urepo, ubranch, target, sha, merge):
 
         match = re.search(regex, body, re.MULTILINE)
         if not match:
-            die(f'{sha}: fromlist commit missing an "Upstream PR #:" reference')
+            err(f'{sha}: fromlist commit missing an "Upstream PR #:" reference')
+            return merge
         
         upr = match.group(1)
         stdout(f'fromlist: {upr}')
@@ -275,7 +292,8 @@ def check_commit(urepo, ubranch, target, sha, merge):
                 break
 
         if not usha:
-                die(f'{sha}: unable to match any commit from upstream PR #{upr}')
+                err(f'{sha}: unable to match any commit from upstream PR #{upr}')
+                return merge
 
     elif tag == 'fromtree':
         regex = r'^\(cherry picked from commit \b([a-f0-9]{40})\b\)'
@@ -404,13 +422,18 @@ def main():
     for r in revs:
         merge = check_commit(urepo, br_str, target, r, merge)
         count += 1
-        stdout(f'- Processed commit {count}')
+        stdout(f'- Processed commit {count}/{len(revs)}')
 
     # Switch back to the previous branch
     stdout('main: switch')
     die_switch = None
     try_switch_back(target)
 
+    if len(err_list):
+        print('Errors found:')
+        print_errs()
+        sys.exit(1)
+ 
     if not merge and (dshas and dshas != revs):
         die(f'{dshas} is different from {revs}')
 
