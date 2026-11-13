@@ -397,7 +397,6 @@ def main():
     parse_args()
 
     token = os.environ.get('GITHUB_TOKEN', None)
-    stdout(f'token: \"{token}\"')
 
     gh = Github(token or None)
 
