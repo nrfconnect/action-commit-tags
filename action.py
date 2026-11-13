@@ -42,9 +42,17 @@ PARSER.add_argument('-b', '--baserev', default=None, required=True,
 PARSER.add_argument('--pr', default=None, required=True,
                     help='<org>/<repo>/<pr num>')
 PARSER.add_argument('--upstream', default=None, required=True,
-                    help='Upstream <org>/<repo>')
+                    help='Upstream <org>/<repo>[/<branch>] (any branch is '
+                    'ignored, see UPSTREAM_BRANCHES)')
 PARSER.add_argument('--quiet-subprocesses', action='store_true',
                     help='silence output related to running subprocesses')
+
+# Upstream branches that a [nrf fromtree] commit may come from. Only heads
+# are ever fetched (never pull requests or other refs), so that SHAs that only
+# exist in GitHub's shared fork-network object storage cannot be matched.
+UPSTREAM_BRANCHES = ('main', 'v*-branch')
+# Local namespace the upstream branches are fetched into
+UPSTREAM_REF_NS = 'nrf/ref'
 
 ARGS = None                     # global arguments, see parse_args()
 
@@ -76,6 +84,14 @@ def gh_pr_split(s):
         raise RuntimeError(f"Invalid pr format: {s}")
 
     return sl[0], sl[1], sl[2]
+
+def gh_upstream_split(s):
+    # Accept <org>/<repo> or <org>/<repo>/<branch>, the branch being ignored
+    sl = s.split('/')
+    if len(sl) not in (2, 3):
+        raise RuntimeError(f"Invalid upstream format: {s}")
+
+    return sl[0], sl[1]
 
 def parse_args():
     # Parse arguments into the ARGS global, validating them before
@@ -153,10 +169,10 @@ def runc_out(cmd, exit_on_cpe=True, suppress_stderr=False, **kwargs):
     return cp.stdout.rstrip()
 
 @functools.cache
-def fetch_branch(repo, branch, target):
-    ref = f'nrf/ref/{branch}'
-    runc(f'git -C {target} fetch {repo.clone_url} {branch}:{ref}')
-    return ref
+def fetch_branches(repo, target):
+    refspecs = [f'+refs/heads/{b}:refs/heads/{UPSTREAM_REF_NS}/{b}'
+                for b in UPSTREAM_BRANCHES]
+    runc(['git', '-C', str(target), 'fetch', repo.clone_url] + refspecs)
 
 @functools.cache
 def fetch_pr(repo, prn, target):
@@ -215,7 +231,30 @@ def try_switch_back(target):
     except subprocess.CalledProcessError as e:
         pass
 
-def check_commit(urepo, ubranch, target, sha, merge):
+def select_upstream_sha(target, shas):
+    # A commit that was itself cherry-picked (e.g. an upstream backport, or a
+    # downstream commit backported to a release branch) carries several
+    # references. Keep only the ones that exist and are reachable from an
+    # allowed upstream branch, and return the last of them, or None.
+    usha = None
+    for m in shas:
+        try:
+            _ = runc_out(f'git -C {target} rev-parse --verify --quiet '
+                         f'{m}^{{commit}}', exit_on_cpe=False,
+                         suppress_stderr=True)
+        except subprocess.CalledProcessError:
+            continue
+        contains = runc_out(f'git -C {target} for-each-ref --contains {m} '
+                            f'--format=%(refname:lstrip=4) '
+                            f'refs/heads/{UPSTREAM_REF_NS}/')
+        if contains:
+            usha = m
+            stdout(f'fromtree: {m} found in upstream: '
+                   f'{", ".join(contains.split())}')
+
+    return usha
+
+def check_commit(urepo, target, sha, merge):
     stdout(f'--- Checking commit {sha}')
     title, body = get_commit_msg(target, sha)
     m = re.match(r'^(Revert\s+\")?\[nrf (mergeup|fromtree|fromlist|noup)\]\s+',
@@ -279,27 +318,23 @@ def check_commit(urepo, ubranch, target, sha, merge):
 
     elif tag == 'fromtree':
         regex = r'^\(cherry picked from commit \b([a-f0-9]{40})\b\)'
-        match = re.search(regex, body, re.MULTILINE)
-        if not match:
+        matches = re.findall(regex, body, re.MULTILINE)
+        if not matches:
             die(f'{sha}: fromtree commit missing cherry-pick reference. '
                 f'Please use "git cherry-pick -x" when cherry-picking')
-        #stdout(f'fromtree: {match.group(0)}')
 
-        usha = match.group(1)
-        stdout(f'fromtree: {usha}')
+        stdout(f'fromtree: {matches}')
 
-        # Fetch the upstream main branch
-        ref = fetch_branch(urepo, ubranch, target)
+        # Fetch the allowed upstream branches
+        fetch_branches(urepo, target)
 
-        # Verify that the commit exists at all in the working tree
-        _ = runc_out(f'git -C {target} rev-parse --verify {usha}^{{commit}}')
+        usha = select_upstream_sha(target, matches)
 
-        # Verify that the commit is in the required branch
-        contains = runc_out(f'git -C {target} branch {ref} --contains {usha}')
-
-        if not re.match(rf'^.*{ref}.*$', contains):
-            die(f'fromtree: upstream branch {ref} does not contain commit {usha}. '
-                f'Please check that the commit is merged upstream')
+        if not usha:
+            die(f'{sha}: none of the commits referenced by the cherry-pick '
+                f'lines {matches} is contained in an upstream branch '
+                f'({", ".join(UPSTREAM_BRANCHES)}). Please check that the '
+                f'commit is merged upstream')
 
     elif tag == 'noup':
         stdout('noup')
@@ -329,13 +364,20 @@ def check_commit(urepo, ubranch, target, sha, merge):
         if revert:
             die(f'Unable to revert commit {usha}.')
         else:
+            hint = ''
+            if tag == 'fromtree':
+                hint = (f' Alternatively, if the commit has also been '
+                        f'backported to another upstream branch '
+                        f'({", ".join(UPSTREAM_BRANCHES)}), cherry-pick '
+                        f'(with -x) that version instead, since it may '
+                        f'differ due to conflict resolution.')
             die(f'Unable to cherry-pick commit {usha}. This means that the upstream '
                 f'commit does not apply cleanly into the NCS fork. This can happen '
                 f'if you modified an upstream commit in order to resolve conflicts, '
                 f'but this is not allowed. Instead, revert any [nrf noup] commits that '
                 f'may be causing the conflict and cherry-pick any additional prior '
                 f'commits from upstream that may be needed in order to avoid a merge '
-                f'conflict. Then you can re-apply the reverted [nrf noup] commits.')
+                f'conflict. Then you can re-apply the reverted [nrf noup] commits.{hint}')
 
     # Execute a diff between the replay branch and the sha to make sure the
     # commit has not been modified
@@ -366,7 +408,7 @@ def main():
     if not target.is_dir():
         die(f'target repo {target} does not exist; check path')
 
-    org_str, repo_str, br_str = gh_pr_split(ARGS.upstream)
+    org_str, repo_str = gh_upstream_split(ARGS.upstream)
     urepo = gh.get_repo(f'{org_str}/{repo_str}')
 
     if ARGS.pr != 'none':
@@ -402,7 +444,7 @@ def main():
     merge = False
     count = 0
     for r in revs:
-        merge = check_commit(urepo, br_str, target, r, merge)
+        merge = check_commit(urepo, target, r, merge)
         count += 1
         stdout(f'- Processed commit {count}')
 

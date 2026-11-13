@@ -8,7 +8,7 @@ inputs:
     description: 'base revision to use. Will compute a rev-list --first-parent to HEAD'
     default: 'none'
   upstream:
-    description: 'Upstream <org>/<repo>/<branch>'
+    description: 'Upstream <org>/<repo>. A trailing /<branch> is accepted but ignored'
     default: 'none'
   github-token:
     description: 'The token to authenticate with'
